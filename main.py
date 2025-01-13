@@ -1,39 +1,119 @@
+import spacy
 import pandas as pd
-from transformers import pipeline
-import torch
-import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
-
-# Загрузка данных
-URL = 'C:/Users/danil/OneDrive - УрФУ/DF_DigitalHelperForAbiturients.xlsx'
-df = pd.read_excel(URL)
-
-# Убедитесь, что все значения в 'Вопросы' - строки, и обработайте NaN
-df['Вопросы'] = df['Вопросы'].fillna('').astype(str)
-
-# Инициализация модели
-device = 0 if torch.cuda.is_available() else -1
-embedding_model = pipeline("feature-extraction", model="distilbert-base-cased", device=device)
-
-# Функция для получения эмбеддинга текста
-def get_text_embedding(text):
-    embedding = embedding_model(text)
-    return np.mean(embedding[0], axis=0).flatten()
-
-# Применяем функцию для создания эмбеддингов для каждого вопроса
-df['Question Embeddings'] = df['Вопросы'].apply(get_text_embedding)
-
-# Преобразование вопроса пользователя в эмбеддинг
-user_question = "сколько бюджетных мест?"
-user_vector = get_text_embedding(user_question)
-
-# Сравнение с использованием косинусного сходства
-similarities = cosine_similarity([user_vector], df['Question Embeddings'].tolist())
-best_match_index = np.argmax(similarities)
-best_answer = df['Ответы'].iloc[best_match_index]
-
-print("Наиболее релевантный ответ:", best_answer)
-print("Схожесть:", similarities[0][best_match_index])
+from sentence_transformers import SentenceTransformer
+import os
 
 
-df.to_excel('DF_DigitalHelperForAbiturients.xlsx', index=False)
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+# Загрузка модели spaCy для русского языка
+nlp = spacy.load("ru_core_news_sm")
+
+
+# Функция для предобработки текста
+def preprocess_text_spacy(text):
+    if not isinstance(text, str):
+        return ''
+
+    # Приведение текста к нижнему регистру
+    text = text.lower()
+
+    # Обработка текста с помощью spaCy
+    doc = nlp(text)
+
+    # Лемматизация и удаление стоп-слов и знаков препинания
+    lemmatized_tokens = [token.lemma_ for token in doc if not token.is_stop and not token.is_punct and token.is_alpha]
+
+    # Объединение лемматизированных токенов обратно в строку
+    return ' '.join(lemmatized_tokens)
+
+
+# Загрузка и подготовка данных
+def load_and_prepare_data(file_path):
+    # Загрузка данных из Excel
+    df = pd.read_excel(file_path, engine='openpyxl')  # Указываем engine для работы с .xlsx файлами
+
+    # Проверка наличия необходимых колонок
+    if 'Вопросы' not in df.columns or 'Ответы' not in df.columns:
+        raise ValueError("База данных должна содержать колонки 'Вопросы' и 'Ответы'.")
+
+    # Предобработка вопросов
+    df['Processed_Questions'] = df['Вопросы'].apply(preprocess_text_spacy)
+
+    return df
+
+
+# Векторизация вопросов с использованием модели SentenceTransformer
+def vectorize_questions(df, model):
+    question_embeddings = model.encode(df['Processed_Questions'].tolist(), convert_to_tensor=True)
+    return question_embeddings
+
+
+# Поиск ответа на вопрос пользователя
+def find_answer(user_question, df, model, question_embeddings, top_k=1):
+    # Предобработка пользовательского вопроса
+    processed_question = preprocess_text_spacy(user_question)
+
+    if not processed_question:
+        return ["Пожалуйста, введите корректный вопрос."], [0.0]
+
+    # Векторизация
+    user_embedding = model.encode([processed_question], convert_to_tensor=True)
+
+    # Вычисление косинусной похожести
+    similarities = cosine_similarity(user_embedding, question_embeddings)[0]
+
+    # Проверка, есть ли схожие вопросы
+    if similarities.max() < 0.1:
+        return ["Извините, я не могу найти подходящего ответа на ваш вопрос."], [similarities.max()]
+
+    # Получение индекса наиболее похожего вопроса
+    top_indices = similarities.argsort()[-top_k:][::-1]
+
+    # Получение ответов
+    answers = df.iloc[top_indices]['Ответы'].values
+    scores = similarities[top_indices]
+
+    return answers, scores
+
+
+# Главная функция
+def main():
+    # Путь к вашей базе данных (XLSX)
+    file_path = 'C:/Users\danil\OneDrive\Документы/BD_DigitalHelper.xlsx'  # Замените на свой путь к файлу
+
+    try:
+        # Загрузка и подготовка данных
+        print("Загрузка и подготовка данных...")
+        df = load_and_prepare_data(file_path)
+
+        # Загрузка модели SentenceTransformer для векторизации
+        print("Загрузка модели...")
+        model = SentenceTransformer('distiluse-base-multilingual-cased-v1')  # Замените на доступную модель
+
+        # Векторизация вопросов
+        print("Векторизация вопросов...")
+        question_embeddings = vectorize_questions(df, model)
+
+        print("Система готова к использованию.")
+    except Exception as e:
+        print(f"Произошла ошибка при подготовке данных: {e}")
+        return
+
+    while True:
+        # Ввод пользовательского вопроса
+        user_question = input("\nВведите ваш вопрос (или 'выход' для завершения): ")
+        if user_question.lower() in ['выход', 'exit', 'quit']:
+            print("Завершение работы.")
+            break
+
+        # Поиск ответа
+        answers, scores = find_answer(user_question, df, model, question_embeddings)
+
+        # Вывод ответа
+        for i, (answer, score) in enumerate(zip(answers, scores), 1):
+            print(f"\nОтвет {i} (Схожесть: {score:.4f}):\n{answer}")
+
+
+if __name__ == "__main__":
+    main()
