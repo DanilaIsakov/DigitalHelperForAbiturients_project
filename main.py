@@ -3,7 +3,7 @@ import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 import os
-
+import time
 
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 # Загрузка модели spaCy для русского языка
@@ -79,8 +79,11 @@ def find_answer(user_question, df, model, question_embeddings, top_k=1):
 
 # Главная функция
 def main():
-    # Путь к вашей базе данных (XLSX)
-    file_path = 'C:/Users\danil\OneDrive\Документы/BD_DigitalHelper.xlsx'  # Замените на свой путь к файлу
+    # Определение пути к директории, в которой находится скрипт
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Построение относительного пути к файлу базы данных
+    file_path = os.path.join(script_dir, 'DB_DigitalHelper.xlsx')
 
     try:
         # Загрузка и подготовка данных
@@ -88,8 +91,10 @@ def main():
         df = load_and_prepare_data(file_path)
 
         # Загрузка модели SentenceTransformer для векторизации
+        start = time.time()
         print("Загрузка модели...")
         model = SentenceTransformer('distiluse-base-multilingual-cased-v1')  # Замените на доступную модель
+        print(f"Модель загружена за {time.time() - start:.2f} секунд.")
 
         # Векторизация вопросов
         print("Векторизация вопросов...")
@@ -113,6 +118,29 @@ def main():
         # Вывод ответа
         for i, (answer, score) in enumerate(zip(answers, scores), 1):
             print(f"\nОтвет {i} (Схожесть: {score:.4f}):\n{answer}")
+
+
+def load_model_and_data():
+    # Построение пути к файлу базы данных
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(script_dir, 'DB_DigitalHelper.xlsx')
+    try:
+        df = load_and_prepare_data(file_path)
+
+        model = SentenceTransformer('distiluse-base-multilingual-cased-v1')
+
+        question_embeddings = vectorize_questions(df, model)
+
+        return df, model, question_embeddings
+    except Exception as e:
+        print(f"Произошла ошибка при подготовке данных: {e}")
+        return None, None, None
+
+
+def ask_question(user_question, df, model, question_embeddings):
+    answers, scores = find_answer(user_question, df, model, question_embeddings)
+    for i, (answer, score) in enumerate(zip(answers, scores), 1):
+        return f"\nОтвет {i} (Схожесть: {score:.4f}):\n{answer}"
 
 
 if __name__ == "__main__":
