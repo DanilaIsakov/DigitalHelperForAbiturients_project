@@ -1,27 +1,37 @@
+import spacy
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 import os
 import time
 
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+# Загрузка модели spaCy для русского языка
+nlp = spacy.load("ru_core_news_sm")
+
+
 # Функция для предобработки текста
 def preprocess_text_spacy(text):
     if not isinstance(text, str):
         return ''
-    
+
     # Приведение текста к нижнему регистру
     text = text.lower()
 
-    # Удаление ненужных символов (простой вариант)
-    text = ''.join([char for char in text if char.isalpha() or char.isspace()])
+    # Обработка текста с помощью spaCy
+    doc = nlp(text)
 
-    return text
+    # Лемматизация и удаление стоп-слов и знаков препинания
+    lemmatized_tokens = [token.lemma_ for token in doc if not token.is_stop and not token.is_punct and token.is_alpha]
+
+    # Объединение лемматизированных токенов обратно в строку
+    return ' '.join(lemmatized_tokens)
 
 
 # Загрузка и подготовка данных
 def load_and_prepare_data(file_path):
     # Загрузка данных из Excel
-    df = pd.read_excel(file_path, engine='openpyxl')
+    df = pd.read_excel(file_path, engine='openpyxl')  # Указываем engine для работы с .xlsx файлами
 
     # Проверка наличия необходимых колонок
     if 'Вопросы' not in df.columns or 'Ответы' not in df.columns:
@@ -35,7 +45,8 @@ def load_and_prepare_data(file_path):
 
 # Векторизация вопросов с использованием модели SentenceTransformer
 def vectorize_questions(df, model):
-    return model.encode(df['Processed_Questions'].tolist(), convert_to_tensor=True)
+    question_embeddings = model.encode(df['Processed_Questions'].tolist(), convert_to_tensor=True)
+    return question_embeddings
 
 
 # Поиск ответа на вопрос пользователя
@@ -52,8 +63,8 @@ def find_answer(user_question, df, model, question_embeddings, top_k=1):
     # Вычисление косинусной похожести
     similarities = cosine_similarity(user_embedding, question_embeddings)[0]
 
-    # Проверка на схожесть
-    if similarities.max() < 0.6:  # Порог схожести 0.6
+    # Проверка, есть ли схожие вопросы
+    if similarities.max() < 0.6:  # Порог схожести теперь 0.6
         return ["Извините, я не могу найти подходящего ответа на ваш вопрос."], [similarities.max()]
 
     # Получение индекса наиболее похожего вопроса
@@ -68,8 +79,10 @@ def find_answer(user_question, df, model, question_embeddings, top_k=1):
 
 # Главная функция
 def main():
-    # Построение пути к файлу базы данных
+    # Определение пути к директории, в которой находится скрипт
     script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Построение относительного пути к файлу базы данных
     file_path = os.path.join(script_dir, 'DB_DigitalHelper.xlsx')
 
     try:
