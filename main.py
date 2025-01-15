@@ -64,8 +64,8 @@ def find_answer(user_question, df, model, question_embeddings, top_k=1):
     similarities = cosine_similarity(user_embedding, question_embeddings)[0]
 
     # Проверка, есть ли схожие вопросы
-    if similarities.max() < 0.1:
-        return ["Извините, я не могу найти подходящего ответа на ваш вопрос."], [similarities.max()]
+    if similarities.max() < 0.6:  # Порог схожести теперь 0.6
+        return ["Извините, ответа на данный вопрос еще нет."], [similarities.max()]
 
     # Получение индекса наиболее похожего вопроса
     top_indices = similarities.argsort()[-top_k:][::-1]
@@ -75,6 +75,7 @@ def find_answer(user_question, df, model, question_embeddings, top_k=1):
     scores = similarities[top_indices]
 
     return answers, scores
+
 
 
 # Главная функция
